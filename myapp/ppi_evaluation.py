@@ -1,5 +1,6 @@
 from django.db import connection
 from collections import defaultdict
+from datetime import datetime
 
 # Tanjung Priok Port Standards in Hours
 PORT_STANDARD_HOURS = {
@@ -10,11 +11,11 @@ PORT_STANDARD_HOURS = {
 }
 
 def populate_ppi_evaluation():
-    print("📈 Populating PPI Evaluation Table...")
+    print(f"Populating PPI Evaluation Table at {datetime.now()}...")
 
     with connection.cursor() as cursor:
-        # Drop if exists and recreate for fresh results
-        cursor.execute("DROP TABLE IF EXISTS ppi_evaluation_table")
+        # Drop & recreate table
+        cursor.execute("DROP TABLE IF EXISTS ppi_evaluation_table CASCADE")
         cursor.execute("""
             CREATE TABLE ppi_evaluation_table (
                 mmsi BIGINT,
@@ -27,11 +28,12 @@ def populate_ppi_evaluation():
                 approaching_status VARCHAR(64),
                 berthing_status VARCHAR(64),
                 trt_status VARCHAR(64),
-                recommendation TEXT
+                recommendation TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
             );
         """)
+        print("Table ppi_evaluation_table recreated.")
 
-        # Helper function: comparison result
         def evaluate_phase(val, avg, std):
             if val > std and val > avg:
                 return "Too Long"
@@ -40,7 +42,6 @@ def populate_ppi_evaluation():
             else:
                 return "Right on Time"
 
-        # 1️⃣ Fetch daily times per ship
         phase_tables = {
             "Waiting": "daily_waiting_time",
             "Approaching": "daily_approaching_time",
@@ -50,7 +51,7 @@ def populate_ppi_evaluation():
 
         ship_day_data = defaultdict(lambda: {"mmsi": None, "day": None})
 
-        # Populate per-phase durations
+        # Gather data per ship per day
         for phase, table in phase_tables.items():
             cursor.execute(f"SELECT mmsi, day, total_hours FROM {table}")
             for mmsi, day, hours in cursor.fetchall():
@@ -58,16 +59,13 @@ def populate_ppi_evaluation():
                 ship_day_data[(mmsi, day)]["day"] = day
                 ship_day_data[(mmsi, day)][f"{phase.lower()}_hours"] = hours
 
-        # 2️⃣ Calculate average durations per phase
         avg_durations = {}
         for phase, table in phase_tables.items():
             cursor.execute(f"SELECT AVG(total_hours) FROM {table}")
             avg = cursor.fetchone()[0] or 0
             avg_durations[phase] = avg
 
-        # 3️⃣ Evaluate each ship
         records = []
-
         for (mmsi, day), data in ship_day_data.items():
             w = data.get("waiting_hours", 0)
             a = data.get("approaching_hours", 0)
@@ -79,13 +77,12 @@ def populate_ppi_evaluation():
             b_status = evaluate_phase(b, avg_durations["Berthing"], PORT_STANDARD_HOURS["Berthing"])
             t_status = evaluate_phase(t, avg_durations["TRT"], PORT_STANDARD_HOURS["TRT"])
 
-            # 💡 Simple recommendation logic
             if any(s == "Too Long" for s in [w_status, a_status, b_status]):
                 rec = "Consider optimizing Waiting/Approaching/Berthing procedures."
             elif all(s == "Right on Time" for s in [w_status, a_status, b_status]):
                 rec = "Operation meets standard across all phases."
             else:
-                rec = "Operation aheads of standards."
+                rec = "Operation ahead of standards."
 
             records.append((
                 mmsi, day, w, a, b, t,
@@ -93,7 +90,7 @@ def populate_ppi_evaluation():
                 rec
             ))
 
-        # 4️⃣ Insert results
+        # Insert all records
         cursor.executemany("""
             INSERT INTO ppi_evaluation_table (
                 mmsi, day,
@@ -103,4 +100,4 @@ def populate_ppi_evaluation():
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, records)
 
-    print(f"✅ Inserted {len(records)} PPI evaluations.")
+    print(f"✅ Inserted {len(records)} PPI evaluations at {datetime.now()}.\n")
