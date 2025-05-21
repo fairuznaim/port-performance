@@ -9,6 +9,8 @@ import math
 import json
 from django.utils.timezone import make_aware
 from myapp.utils.zone_classifier import classify_ship_status
+from django.shortcuts import render
+from django.db import connection
 
 def calculate_bearing(pointA, pointB):
     lat1, lon1 = map(math.radians, pointA)
@@ -208,4 +210,41 @@ def map_view(request):
 
     return render(request, "myapp/index.html", {
         "ships_json": ships_json
+    })
+
+def ppi_dashboard(request):
+    # Optional filters
+    mmsi = request.GET.get("mmsi")
+    day = request.GET.get("day")
+    status_filter = request.GET.get("status")
+
+    query = """
+        SELECT mmsi, day, trt_cycle_number,
+               waiting_hours, approaching_hours, berthing_hours, trt_hours,
+               waiting_status, approaching_status, berthing_status, trt_status,
+               recommendation
+        FROM ppi_evaluation_table
+        WHERE 1=1
+    """
+    params = []
+
+    if mmsi:
+        query += " AND mmsi = %s"
+        params.append(mmsi)
+    if day:
+        query += " AND day = %s"
+        params.append(day)
+    if status_filter:
+        query += " AND trt_status = %s"
+        params.append(status_filter)
+
+    query += " ORDER BY day DESC, trt_cycle_number"
+
+    with connection.cursor() as cursor:
+        cursor.execute(query, params)
+        columns = [col[0] for col in cursor.description]
+        results = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+    return render(request, "ppi_dashboard.html", {
+        "records": results
     })

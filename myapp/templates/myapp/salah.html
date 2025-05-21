@@ -1,0 +1,74 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PPI Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="p-4">
+
+    <h2 class="mb-4">🚢 Port Performance Index (PPI) Dashboard</h2>
+
+    <form class="row g-3 mb-4">
+        <div class="col-md-3">
+            <input type="text" name="mmsi" class="form-control" placeholder="Filter by MMSI">
+        </div>
+        <div class="col-md-3">
+            <input type="date" name="day" class="form-control">
+        </div>
+        <div class="col-md-3">
+            <select name="status" class="form-select">
+                <option value="">-- Filter by TRT Status --</option>
+                <option value="Too Long">Too Long</option>
+                <option value="Above Standard">Above Standard</option>
+                <option value="Right on Time">Right on Time</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <button class="btn btn-primary" type="submit">Filter</button>
+        </div>
+    </form>
+
+    <table class="table table-bordered table-hover">
+        <thead class="table-dark">
+            <tr>
+                <th>MMSI</th>
+                <th>Day</th>
+                <th>Cycle</th>
+                <th>Waiting</th>
+                <th>Approaching</th>
+                <th>Berthing</th>
+                <th>TRT</th>
+                <th>Status</th>
+                <th>Recommendation</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for row in records %}
+            <tr>
+                <td>{{ row.mmsi }}</td>
+                <td>{{ row.day }}</td>
+                <td>{{ row.trt_cycle_number }}</td>
+                <td>{{ row.waiting_hours }} hrs ({{ row.waiting_status }})</td>
+                <td>{{ row.approaching_hours }} hrs ({{ row.approaching_status }})</td>
+                <td>{{ row.berthing_hours }} hrs ({{ row.berthing_status }})</td>
+                <td><strong>{{ row.trt_hours }}</strong> hrs ({{ row.trt_status }})</td>
+                <td>
+                    {% if row.trt_status == "Too Long" %}
+                        <span class="badge bg-danger">⚠️ {{ row.trt_status }}</span>
+                    {% elif row.trt_status == "Above Standard" %}
+                        <span class="badge bg-success">✅ {{ row.trt_status }}</span>
+                    {% else %}
+                        <span class="badge bg-warning text-dark">⏱️ {{ row.trt_status }}</span>
+                    {% endif %}
+                </td>
+                <td>{{ row.recommendation }}</td>
+            </tr>
+        {% empty %}
+            <tr><td colspan="9" class="text-center">No records found.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+</body>
+</html>
