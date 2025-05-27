@@ -4,31 +4,45 @@
 <head>
     <title>PPI Dashboard</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css" rel="stylesheet">
+    <style>
+        canvas {
+            width: 100% !important;
+            height: 300px !important;
+        }
+    </style>
 </head>
 <body class="p-4">
 
-    <h2 class="mb-4 text-center"> Port Performance Index (PPI) Dashboard</h2>
+    <h2 class="mb-5 text-center">Port Performance Indicators (PPI) Dashboard</h2>
 
-    <form class="row g-3 mb-4">
-        <div class="col-md-3">
-            <input type="text" name="mmsi" class="form-control" placeholder="Filter by MMSI">
-        </div>
-        <div class="col-md-3">
-            <input type="date" name="day" class="form-control">
-        </div>
-        <div class="col-md-3">
-            <select name="status" class="form-select">
-                <option value="">-- Filter by TRT Status --</option>
-                <option value="Too Long">Too Long</option>
-                <option value="Above Standard">Above Standard</option>
-                <option value="Right on Time">Right on Time</option>
-            </select>
-        </div>
-        <div class="col-md-3">
-            <button class="btn btn-primary" type="submit">Filter</button>
-        </div>
-    </form>
+    <!-- 🔍 Filter Section -->
+    <div class="container mb-5">
+        <form method="get" class="row justify-content-center g-3 align-items-end" id="ppi-filter-form">
+            <div class="col-md-3">
+                <label class="form-label">MMSI</label>
+                <input type="text" name="mmsi" id="mmsi" class="form-control" placeholder="Filter by MMSI" value="{{ request.GET.mmsi }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Select Dates (max 4)</label>
+                <input type="text" name="dates" id="calendar" class="form-control" placeholder="Pick up to 4 dates" value="{{ request.GET.dates }}" readonly>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">TRT Status</label>
+                <select name="status" id="status" class="form-select">
+                    <option value="">-- Filter by TRT Status --</option>
+                    <option value="Too Long" {% if request.GET.status == "Too Long" %}selected{% endif %}>Too Long</option>
+                    <option value="Above Standard" {% if request.GET.status == "Above Standard" %}selected{% endif %}>Above Standard</option>
+                    <option value="Right on Time" {% if request.GET.status == "Right on Time" %}selected{% endif %}>Right on Time</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <button type="submit" class="btn btn-primary w-100">Apply Filters</button>
+            </div>
+        </form>
+    </div>
 
+    <!-- 📊 Table -->
     <table class="table table-bordered table-hover">
         <thead class="table-dark">
             <tr>
@@ -40,6 +54,7 @@
                 <th>TRT</th>
                 <th>Status</th>
                 <th>Recommendation</th>
+                <th>Completeness</th>
             </tr>
         </thead>
         <tbody>
@@ -53,20 +68,240 @@
                 <td><strong>{{ row.trt_hours }}</strong> hrs ({{ row.trt_status }})</td>
                 <td>
                     {% if row.trt_status == "Too Long" %}
-                        <span class="badge bg-danger"> {{ row.trt_status }}</span>
+                        <span class="badge bg-danger">{{ row.trt_status }}</span>
                     {% elif row.trt_status == "Above Standard" %}
-                        <span class="badge bg-success"> {{ row.trt_status }}</span>
+                        <span class="badge bg-success">{{ row.trt_status }}</span>
                     {% else %}
-                        <span class="badge bg-warning text-dark"> {{ row.trt_status }}</span>
+                        <span class="badge bg-warning text-dark">{{ row.trt_status }}</span>
                     {% endif %}
                 </td>
                 <td>{{ row.recommendation }}</td>
+                <td>
+                    {% if row.is_partial %}
+                        <span class="badge bg-warning text-dark">Partial TRT</span>
+                    {% else %}
+                        <span class="badge bg-success">Completed</span>
+                    {% endif %}
+                </td>
             </tr>
         {% empty %}
             <tr><td colspan="9" class="text-center">No records found.</td></tr>
         {% endfor %}
         </tbody>
     </table>
+
+    <!-- 🔄 Manual Refresh PPI Calculation -->
+    <div class="container mb-4">
+        <div class="row justify-content-center">
+            <div class="col-md-4 text-center">
+                <button id="refresh-ppi-btn" class="btn btn-primary w-100">Refresh PPI Calculation</button>
+                <div id="refresh-ppi-status" class="mt-2"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 📈 Charts -->
+    <hr class="my-5">
+    <h3 class="text-center mb-4">Phase Duration Trends</h3>
+
+    <div class="row g-4">
+        <div class="col-md-6">
+            <canvas id="waiting-chart"></canvas>
+            <div id="waiting-status" class="text-center mt-2"></div>
+        </div>
+        <div class="col-md-6">
+            <canvas id="approaching-chart"></canvas>
+            <div id="approaching-status" class="text-center mt-2"></div>
+        </div>
+        <div class="col-md-6">
+            <canvas id="berthing-chart"></canvas>
+            <div id="berthing-status" class="text-center mt-2"></div>
+        </div>
+        <div class="col-md-6">
+            <canvas id="turnaround-chart"></canvas>
+            <div id="turnaround-status" class="text-center mt-2"></div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script>
+        const allowedDates = {{ allowed_dates|safe }};
+
+        flatpickr("#calendar", {
+            mode: "multiple",
+            maxDate: "today",
+            dateFormat: "Y-m-d",
+            enable: allowedDates,
+            allowInput: false,
+            clickOpens: true,
+            onReady: (selectedDates, dateStr, instance) => {
+                instance._input.setAttribute("readonly", "readonly");
+        },
+        onChange: function(selectedDates, dateStr, instance) {
+            if (selectedDates.length > 4) {
+                selectedDates.pop();
+                alert("You can select up to 4 dates only.");
+                instance.setDate(selectedDates);
+            }
+
+            // ⚠️ Do NOT update charts if < 3 dates selected
+            if (selectedDates.length >= 3) {
+            reloadCharts();
+            }
+        }
+    }); 
+
+
+        function reloadCharts() {
+            const selectedDates = document.getElementById("calendar").value;
+            const query = selectedDates ? `?dates=${encodeURIComponent(selectedDates)}` : "";
+
+            drawChart('waiting-chart', `/api/phase-graph/waiting/${query}`, 'Waiting Time');
+            drawChart('approaching-chart', `/api/phase-graph/approaching/${query}`, 'Approaching Time');
+            drawChart('berthing-chart', `/api/phase-graph/berthing/${query}`, 'Berthing Time');
+            drawChart('turnaround-chart', `/api/phase-graph/turnaround/${query}`, 'Turnaround Time');
+        }
+
+        async function drawChart(canvasId, apiUrl, titleText) {
+            const response = await fetch(apiUrl);
+            const data = await response.json();
+
+            const labels = data.daily_averages.map(d => d.date);
+            const daily = data.daily_averages.map(d => ({ x: d.date, y: d.average }));
+            const avg = data.overall_average;
+            const standard = data.port_standard;
+
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: [
+                        {
+                            label: "Daily Average",
+                            data: daily,
+                            borderColor: 'blue',
+                            backgroundColor: 'blue',
+                            pointRadius: 4,
+                            fill: false,
+                            tension: 0.2
+                        },
+                        {
+                            label: "Port Standard",
+                            data: labels.map(date => ({ x: date, y: standard })),
+                            type: 'line',
+                            borderDash: [5, 5],
+                            borderColor: 'red',
+                            borderWidth: 1,
+                            pointRadius: 0
+                        },
+                        {
+                            label: "Overall Average",
+                            data: labels.map(date => ({ x: date, y: avg })),
+                            type: 'line',
+                            borderColor: 'green',
+                            borderWidth: 2,
+                            pointRadius: 0
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: titleText,
+                            align: 'center',
+                            color: '#000',
+                            font: {
+                                size: 16,
+                                weight: 'normal'
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Date',
+                                color: '#000',
+                                font: {
+                                    size: 14,
+                                    weight: 'normal'
+                                }
+                            },
+                            ticks: {
+                                color: '#000',
+                                font: {
+                                    size: 12,
+                                    weight: 'normal'
+                                }
+                            },
+                            type: 'category'
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'Hours',
+                                color: '#000',
+                                font: {
+                                    size: 14,
+                                    weight: 'normal'
+                                }
+                            },
+                            ticks: {
+                                color: '#000',
+                                font: {
+                                    size: 12,
+                                    weight: 'normal'
+                                }
+                            },
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+
+            const statusBox = document.getElementById(`${canvasId.replace('-chart', '')}-status`);
+            if (avg <= standard) {
+                statusBox.innerHTML = `<div class="alert alert-success py-1 mb-0">Meets the Standard</div>`;
+            } else {
+                statusBox.innerHTML = `<div class="alert alert-danger py-1 mb-0">Below Standard</div>`;
+            }
+        }
+
+        // Initial chart load
+        window.onload = function () {
+            reloadCharts();
+        };
+
+    document.getElementById('refresh-ppi-btn').addEventListener('click', function () {
+        const statusDiv = document.getElementById('refresh-ppi-status');
+        statusDiv.innerHTML = '<div class="text-muted">Processing...</div>';
+
+        fetch("{% url 'refresh_ppi' %}", {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token }}',
+                'Content-Type': 'application/json'
+            },
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                statusDiv.innerHTML = '<div class="alert alert-success py-1">PPI Successfully Recalculated</div>';
+                reloadCharts();  // Optionally reload the charts too
+            } else {
+                statusDiv.innerHTML = `<div class="alert alert-danger py-1">Error: ${data.message}</div>`;
+            }
+        })
+        .catch(error => {
+            statusDiv.innerHTML = '<div class="alert alert-danger py-1">Unexpected Error Occurred</div>';
+            console.error(error);
+        });
+    });
+    </script>
 
 </body>
 </html>

@@ -2,7 +2,6 @@ from datetime import datetime, timedelta
 from myapp.models import AISVesselFiltered
 from myapp.utils.zone_classifier import classify_ship_status
 
-
 def generate_trt_for_mmsi(mmsi, start_time):
     print(f"🛠 Generating AIS for MMSI {mmsi}")
     entries = []
@@ -30,39 +29,34 @@ def generate_trt_for_mmsi(mmsi, start_time):
     callsign = callsign_map[mmsi]
     shiptype = 70
 
-    # Zone-coherent coordinates
-    zones = {
-        "Approaching": (-6.05, 106.89),
-        "Maneuvering": (-6.097617, 106.88277),
-        "Berthing":    (-6.097617, 106.88277),
-        "Unberthing":  (-6.097617, 106.88277),
-        "Departing":   (-6.00, 106.88),
-        "Exit":        (-5.90, 106.86),
+    # 📍 Phase locations
+    phase_path = {
+        "Postponed":   (-5.75, 106.85),
+        "Anchoring":   (-5.98, 106.88),
+        "Approaching": (-6.04, 106.89),
+        "Maneuvering": (-6.0975, 106.8830),
+        "Berthing":    (-6.0975, 106.8830),
+        "Departing":   (-6.00, 106.88),   # treat as end-of-BERTHING point
     }
 
-    # Each block: label, duration (hrs), speed (knots)
-    if mmsi == 525022130:
-        phase_blocks = [
-            ("Approaching", 3, 6),
-            ("Maneuvering", 1, 3),
-            ("Berthing",    4, 0),
-            ("Unberthing",  1, 2.5),
-            ("Departing",   1, 8),
-            ("Exit",        1, 12),
-        ]
-    else:
-        phase_blocks = [
-            ("Unberthing",  1, 2.5),
-            ("Departing",   1, 8),
-            ("Exit",        1, 12),
-        ]
+    # ⏱ Phase durations + speeds
+    phase_blocks = [
+        ("Postponed",   4, 0.1),
+        ("Anchoring",   6, 0.3),
+        ("Approaching", 2, 5.0),
+        ("Maneuvering", 1, 2.5),
+        ("Berthing",    4, 0.0),
+        ("Departing",   2, 8.0),  # 💡 Departure as terminal marker
+    ]
+
+    interval_minutes = 2  # Finer resolution
 
     for label, hours, speed in phase_blocks:
-        lat, lon = zones[label]
-        steps = int((hours * 60) / 5)
+        lat, lon = phase_path[label]
+        steps = int((hours * 60) / interval_minutes)
 
         for i in range(steps):
-            timestamp = start_time + timedelta(minutes=i * 5)
+            timestamp = start_time + timedelta(minutes=i * interval_minutes)
             status = classify_ship_status(lat, lon, speed)
 
             entry = AISVesselFiltered(
@@ -95,11 +89,9 @@ def generate_trt_for_mmsi(mmsi, start_time):
 
 
 def generate_all_trt_ships():
-    base_times = {
-        413338660: datetime(2025, 3, 27, 15, 30, 25) + timedelta(minutes=5),
-        525022130: datetime(2025, 3, 29, 15, 9, 21) + timedelta(minutes=5),
-        357106000: datetime(2025, 3, 29, 15, 7, 6) + timedelta(minutes=5),
-    }
+    mmsi_list = [413338660, 525022130, 357106000]
 
-    for mmsi, start_time in base_times.items():
-        generate_trt_for_mmsi(mmsi, start_time)
+    for mmsi in mmsi_list:
+        latest = AISVesselFiltered.objects.filter(mmsi=mmsi).order_by("-received_at").first()
+        base_time = (latest.received_at + timedelta(minutes=5)) if latest else datetime(2025, 3, 27, 8, 0, 0)
+        generate_trt_for_mmsi(mmsi, base_time)

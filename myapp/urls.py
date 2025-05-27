@@ -1,10 +1,18 @@
 from django.urls import path
-from .views import show_data, map_view
-from . import views
+from .views import (
+    homepage,
+    map_with_data,
+    ppi_dashboard,
+    map_dummy_view,
+    get_phase_graph_data,
+    refresh_ppi
+)
 
 urlpatterns = [
-    path('', show_data, name='home'),       # Homepage
-    path('data/', show_data, name='show_data'),  # Data Table
-    path('index/', map_view, name='index'),  # Map Page
-    path('ppi-dashboard/', views.ppi_dashboard, name='ppi_dashboard'), # PPI Page
+    path('', homepage, name='home'), 
+    path('map/', map_with_data, name='map_with_data'),
+    path('ppi-dashboard/', ppi_dashboard, name='ppi_dashboard'),
+    path('map-dummy/', map_dummy_view, name='map-dummy'),
+    path('api/phase-graph/<str:phase>/', get_phase_graph_data, name='phase-graph-api'),
+    path('refresh-ppi/', refresh_ppi, name='refresh_ppi'),
 ]

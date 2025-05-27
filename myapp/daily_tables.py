@@ -1,6 +1,12 @@
 from django.db import connection
+import logging
+logger = logging.getLogger(__name__)
+from datetime import datetime
 
 def populate_daily_phase_tables():
+    logger.info("📅 populate_daily_phase_tables() triggered")
+    start_time = datetime.now()
+    logger.info(f"📅 Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print("🚢 Populating all daily PPI tables...")
 
     with connection.cursor() as cursor:
@@ -84,3 +90,6 @@ def populate_daily_phase_tables():
         """)
 
     print("✅ All daily tables populated with trt_cycle_number!")
+    end_time = datetime.now()
+    duration = (end_time - start_time).total_seconds()
+    logger.info(f"✅ Finished populate_daily_phase_tables() in {duration:.2f} seconds at {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
