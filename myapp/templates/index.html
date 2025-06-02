@@ -110,14 +110,36 @@
         <td>{{ row.lon }}</td>
         <td>{{ row.speed }}</td>
         <td>{{ row.status }}</td>
-      </tr>
-      {% empty %}
-      <tr>
-        <td colspan="10" class="text-center">No data available for selected filters.</td>
-      </tr>
-      {% endfor %}
-    </tbody>
+    </tr>
+    {% empty %}
+    <tr>
+      <td colspan="10" class="text-center">No data available for selected filters.</td>
+    </tr>
+    {% endfor %}
+  </tbody>
   </table>
+
+<nav class="mt-4">
+  <ul class="pagination justify-content-center">
+    {% if data.has_previous %}
+      <li class="page-item">
+        <a class="page-link" href="?{% if request.GET.mmsi %}mmsi={{ request.GET.mmsi }}&{% endif %}{% if request.GET.dates %}dates={{ request.GET.dates }}&{% endif %}page={{ data.previous_page_number }}">Previous</a>
+      </li>
+    {% else %}
+      <li class="page-item disabled"><span class="page-link">Previous</span></li>
+    {% endif %}
+
+    <li class="page-item disabled"><span class="page-link">Page {{ data.number }} of {{ data.paginator.num_pages }}</span></li>
+
+    {% if data.has_next %}
+      <li class="page-item">
+        <a class="page-link" href="?{% if request.GET.mmsi %}mmsi={{ request.GET.mmsi }}&{% endif %}{% if request.GET.dates %}dates={{ request.GET.dates }}&{% endif %}page={{ data.next_page_number }}">Next</a>
+      </li>
+    {% else %}
+      <li class="page-item disabled"><span class="page-link">Next</span></li>
+    {% endif %}
+  </ul>
+</nav>
 
   <!-- Scripts -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
@@ -135,35 +157,49 @@
       allowInput: false
     });
 
-    const ships = {{ ships_json|safe }};
-    const map = L.map("map").setView([-6.104, 106.88], 13);
+const ships = {{ ships_json|safe }};
 
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: "&copy; OpenStreetMap contributors"
-    }).addTo(map);
+const portBounds = L.latLngBounds(
+  [-6.25, 106.75],  // Southwest
+  [-5.85, 107.05]   // Northeast
+);
 
-    const portBounds = L.latLngBounds([
-      [-5.7360109, 106.8017998],
-      [-6.1620722, 107.0091395]
-    ]);
-    map.fitBounds(portBounds);
+const map = L.map("map", {
+  minZoom: 10,
+  maxZoom: 18,
+  maxBounds: portBounds,
+  maxBoundsViscosity: 1.0
+}).setView([-6.104, 106.88], 13);
+
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  attribution: "&copy; OpenStreetMap contributors"
+}).addTo(map);
+
+map.fitBounds(portBounds);
 
     const shipColors = {};
     const colorPalette = ["#FF5733", "#33C3FF", "#33FF57", "#FF33F6", "#FFB733", "#33FFB5", "#B733FF", "#7DCEA0", "#F5B7B1", "#D7BDE2"];
     let colorIndex = 0;
-    const shipTracks = {}, shipPoints = {};
+    const shipTracks = {};  
+    const shipPoints = {};  
 
     ships.forEach(ship => {
+      const dateOnly = ship.received_at.split(" ")[0];
+      const key = `${ship.mmsi}|${dateOnly}`;
+
       if (!shipColors[ship.mmsi]) {
         shipColors[ship.mmsi] = colorPalette[colorIndex++ % colorPalette.length];
       }
-      shipTracks[ship.mmsi] = shipTracks[ship.mmsi] || [];
-      shipPoints[ship.mmsi] = shipPoints[ship.mmsi] || [];
-      shipTracks[ship.mmsi].push([ship.lat, ship.lon]);
-      shipPoints[ship.mmsi].push(ship);
+
+      shipTracks[key] = shipTracks[key] || [];
+      shipPoints[key] = shipPoints[key] || [];
+
+      shipTracks[key].push([ship.lat, ship.lon]);
+      shipPoints[key].push(ship);
     });
 
-    Object.entries(shipPoints).forEach(([mmsi, points]) => {
+    Object.entries(shipPoints).forEach(([key, points]) => {
+      const mmsi = key.split('|')[0];
       points.sort((a, b) => new Date(a.received_at) - new Date(b.received_at));
 
       points.forEach((ship, i) => {
@@ -189,7 +225,8 @@
       });
     });
 
-    Object.entries(shipTracks).forEach(([mmsi, path]) => {
+    Object.entries(shipTracks).forEach(([key, path]) => {
+      const mmsi = key.split('|')[0];
       L.polyline(path, {
         color: shipColors[mmsi],
         weight: 2,
@@ -203,9 +240,32 @@
       onAdd: function () {
         const div = L.DomUtil.create('div', 'leaflet-control custom-legend');
         div.innerHTML += `<strong> Legend</strong><br>`;
-        div.innerHTML += `<span style="background:red; border: 2px solid red;"></span> Last Position<br>`;
-        div.innerHTML += `<span style="background:black;"></span> Route Pins<br>`;
-        div.innerHTML += `<span style="background:transparent; border: 2px dashed #000;"></span> Port Boundary<br>`;
+        div.innerHTML += `<span style="
+          display:inline-block;
+          width:12px;
+          height:12px;
+          border: 2px solid red;
+          border-radius: 50%;
+          background: transparent;
+        "></span> Last Position<br>`;
+
+        div.innerHTML += `<span style="
+          display:inline-block;
+          width:12px;
+          height:12px;
+          border: 2px solid black;
+          border-radius: 50%;
+          background: transparent;
+        "></span> Route Pins<br>`;
+
+        div.innerHTML += `<span style="
+          display:inline-block;
+          width:12px;
+          height:12px;
+          border: 2px dashed #000;
+          border-radius: 0;
+          background: transparent;
+        "></span> Port Boundary<br>`;
         return div;
       }
     });

@@ -276,30 +276,49 @@
             reloadCharts();
         };
 
-    document.getElementById('refresh-ppi-btn').addEventListener('click', function () {
+        document.getElementById('refresh-ppi-btn').addEventListener('click', function () {
         const statusDiv = document.getElementById('refresh-ppi-status');
-        statusDiv.innerHTML = '<div class="text-muted">Processing...</div>';
+        const steps = [
+            "Pre-processing Data...",
+            "Calculate Ship Phases...",
+            "Populate Daily Phase Tables...",
+            "Processing PPI Evaluation..."
+        ];
 
-        fetch("{% url 'refresh_ppi' %}", {
-            method: 'POST',
-            headers: {
-                'X-CSRFToken': '{{ csrf_token }}',
-                'Content-Type': 'application/json'
-            },
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.status === 'success') {
-                statusDiv.innerHTML = '<div class="alert alert-success py-1">PPI Successfully Recalculated</div>';
-                reloadCharts();  // Optionally reload the charts too
-            } else {
-                statusDiv.innerHTML = `<div class="alert alert-danger py-1">Error: ${data.message}</div>`;
+        async function refreshPPI() {
+            statusDiv.innerHTML = `<div class="text-muted">${steps[0]}</div>`;
+
+            try {
+                const response = await fetch("{% url 'refresh_ppi' %}", {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRFToken': '{{ csrf_token }}',
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+                    for (let i = 1; i < steps.length; i++) {
+                        await delay(700);
+                        statusDiv.innerHTML = `<div class="text-muted">${steps[i]}</div>`;
+                    }
+
+                    await delay(1000);
+                    statusDiv.innerHTML = `<div class="alert alert-success py-1"> PPI Successfully Recalculated</div>`;
+                    reloadCharts();
+                } else {
+                    statusDiv.innerHTML = `<div class="alert alert-danger py-1">Error: ${result.message}</div>`;
+                }
+            } catch (err) {
+                console.error(err);
+                statusDiv.innerHTML = `<div class="alert alert-danger py-1">Unexpected error occurred.</div>`;
             }
-        })
-        .catch(error => {
-            statusDiv.innerHTML = '<div class="alert alert-danger py-1">Unexpected Error Occurred</div>';
-            console.error(error);
-        });
+        }
+
+        refreshPPI();
     });
     </script>
 

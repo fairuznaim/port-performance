@@ -48,9 +48,10 @@ document.addEventListener("DOMContentLoaded", function () {
 
   trialZones.forEach(zone => {
       L.polygon(zone.coords, {
-          color: zone.color,
-          fillColor: zone.color,
-          fillOpacity: 0.10,
+          color: "transparent",
+          fillColor: "transparent",
+          fillOpacity: 0,
+          opacity: 0,
           interactive: false,
           pane: "overlayPane"
       }).addTo(map).bindPopup(zone.name);
@@ -210,15 +211,17 @@ document.addEventListener("DOMContentLoaded", function () {
       }
     ];
   
-    portZones.forEach(zone => {
+    const visiblePortZones = portZones.filter(zone => zone.color.toLowerCase() !== "red");
+
+    visiblePortZones.forEach(zone => {
       L.polygon(zone.coords, {
         color: zone.color,
         fillColor: zone.color,
         fillOpacity: 0.2,
-        interactive: false,  // 👈 prevents conflict with ship markers
+        interactive: false,
         pane: "overlayPane"
-      }).addTo(map);
+      }).addTo(map).bindPopup(zone.name);
     });
-  
+
     console.log("✅ Port boundary + all zones loaded safely!");
   });  

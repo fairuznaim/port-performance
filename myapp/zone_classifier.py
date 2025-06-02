@@ -8,7 +8,7 @@ ZONE_1_POLY = Polygon([
     (107.0098827, -5.7360109)   # NE
 ])
 
-# ✅ Zone 2: Fairway / Approaching (Updated to reach -6.1620722 like JS version)
+# ✅ Zone 2: Fairway / Approaching
 ZONE_2_POLY = Polygon([
     (106.8017998, -5.9500000),  # NW
     (106.8017998, -6.1620722),  # SW

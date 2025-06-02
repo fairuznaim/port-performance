@@ -10,9 +10,15 @@ from geopy.distance import geodesic
 from dateutil import parser
 from django.utils.timezone import make_aware
 from django.utils.timezone import is_naive, make_aware, localtime
+from datetime import datetime, timedelta
+from django.db.models import Q
+from django.db.models import Func, F, Value, DateTimeField, ExpressionWrapper
+from pytz import timezone
+from django.db.models.functions import Length
+import pytz
 import math, json
 
-from myapp.utils.zone_classifier import classify_ship_status
+from myapp.zone_classifier import classify_ship_status
 from myapp.phase_tracker import compute_phase_durations
 from myapp.daily_tables import populate_daily_phase_tables
 from myapp.ppi_evaluation import populate_ppi_evaluation
@@ -31,7 +37,7 @@ DAILY_PHASE_TABLES = {
     'turnaround': 'daily_turn_round_time'
 }
 
-# ⚙️ Bearing calculation helper
+# Bearing Calculation
 def calculate_bearing(pointA, pointB):
     lat1, lon1 = map(math.radians, pointA)
     lat2, lon2 = map(math.radians, pointB)
@@ -42,10 +48,10 @@ def calculate_bearing(pointA, pointB):
     bearing = math.degrees(math.atan2(x, y))
     return (bearing + 360) % 360
 
-# ✅ Pre-Processing Filtration for AISVesselFiltered
+# Pre-Processing Filtration for AISVesselFiltered
 
 def filter_ais_data_view(request):
-    print("🚦 Filtering AISData to populate AISVesselFiltered...")
+    print("Filtering AISData to populate AISVesselFiltered...")
 
     port_polygon = Polygon([
         (106.60077079026324, -5.735100186886086),
@@ -55,11 +61,22 @@ def filter_ais_data_view(request):
     ])
     berthing_target = (-6.100, 106.885)
 
-    ships_qs = AISData.objects.filter(
-        lat__isnull=False, lon__isnull=False,
+    from django.db.models import CharField
+    from django.db.models.functions import Cast, Length
+
+    ships_qs = AISData.objects.annotate(
+        mmsi_str=Cast('mmsi', CharField()),
+        mmsi_length=Length(Cast('mmsi', CharField()))
+    ).filter(
+        mmsi_length=9,
+        lat__isnull=False,
+        lon__isnull=False,
         course__range=(0, 360),
-        shiptype__gte=70, shiptype__lte=89,
-        shipname__isnull=False, callsign__isnull=False, imo__isnull=False
+        shiptype__gte=70,
+        shiptype__lte=89,
+        shipname__isnull=False,
+        callsign__isnull=False,
+        imo__isnull=False
     ).exclude(shipname='', callsign='')
 
     ship_groups = defaultdict(list)
@@ -144,36 +161,62 @@ def filter_ais_data_view(request):
         AISVesselFiltered(**ship) for ship in filtered_ships
     ]
     AISVesselFiltered.objects.bulk_create(records, batch_size=100)
-    print(f"✅ Exported {len(records)} ships to AISVesselFiltered")
+    print(f"Exported {len(records)} ships to AISVesselFiltered")
 
     return JsonResponse({"count": len(records)})
 
-# ✅ Map and Data Viewer
-from django.utils.timezone import localtime
-from django.db.models import Q
-from django.utils.timezone import is_naive, make_aware
+# Map and Data Viewer
 import json
+import pytz
+from django.utils.timezone import localtime
+from datetime import datetime, timedelta
+from django.db.models import Q
+from pytz import timezone
+from django.utils.timezone import is_naive, make_aware
+from django.core.paginator import Paginator
+from django.shortcuts import render
+from django.utils.timezone import make_aware, is_naive, localtime
+from django.db.models import Func, F, Value, DateTimeField, ExpressionWrapper
+from .models import AISVesselFiltered
 
 def map_with_data(request):
     mmsi_filter = request.GET.get("mmsi")
     dates_filter = request.GET.get("dates")
 
-    ships_qs = AISVesselFiltered.objects.all()
+    # Start with filtered queryset
+    from django.db.models import Subquery
+
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT DISTINCT mmsi FROM ppi_evaluation_table")
+        result = cursor.fetchall()
+
+    ppi_mmsi_list = [row[0] for row in result]
+    filtered_qs = AISVesselFiltered.objects.filter(mmsi__in=ppi_mmsi_list)
 
     if mmsi_filter:
-        ships_qs = ships_qs.filter(mmsi=mmsi_filter)
+        filtered_qs = filtered_qs.filter(mmsi=mmsi_filter)
+
+    from django.db.models import F, Func, ExpressionWrapper, DateTimeField
+    from django.db.models.functions import Cast
+    from datetime import datetime
+    from pytz import timezone, UTC
+    from django.db.models.functions import TruncDate
+    from django.utils.timezone import get_fixed_timezone
+    import pytz
+
+    jakarta_tz = pytz.timezone('Asia/Jakarta')
 
     if dates_filter:
-        selected_dates = dates_filter.split(",")
-        ships_qs = ships_qs.filter(
-            received_at__date__in=selected_dates
-        )
+        selected_dates = [d.strip() for d in dates_filter.split(",") if d.strip()]
+        filtered_qs = filtered_qs.annotate(
+            local_day=TruncDate('received_at', tzinfo=jakarta_tz)
+        ).filter(local_day__in=selected_dates)
+         
+        filtered_qs = filtered_qs.order_by('mmsi', 'received_at')
 
-    ships_qs = ships_qs.order_by("mmsi", "received_at")
-
-    # 🔄 Serialize for map
+    # Map: serialize ALL ships (filtered)
     serialized = []
-    for ship in ships_qs:
+    for ship in filtered_qs:
         received_at = localtime(make_aware(ship.received_at) if is_naive(ship.received_at) else ship.received_at)
         serialized.append({
             "mmsi": ship.mmsi,
@@ -188,15 +231,20 @@ def map_with_data(request):
             "status": ship.status
         })
 
-    # 📅 Get available dates for calendar filter
+    # 📋 Table: paginate the same queryset
+    paginator = Paginator(filtered_qs, 20)
+    page_number = request.GET.get("page")
+    page_obj = paginator.get_page(page_number)
+
+    # 📅 Calendar: available date list
     allowed_dates = [
         dt.strftime("%Y-%m-%d")
         for dt in AISVesselFiltered.objects.dates("received_at", "day")
     ]
 
     return render(request, "index.html", {
-        "ships_json": json.dumps(serialized),
-        "data": ships_qs,  # for table rendering
+        "ships_json": json.dumps(serialized),  
+        "data": page_obj,                      
         "allowed_dates": json.dumps(allowed_dates),
         "request": request
     })
@@ -237,37 +285,6 @@ def get_phase_graph_data(request, phase):
         'overall_average': avg_of_avgs,
         'daily_averages': daily_data
     })
-
-
-def map_dummy_view(request):
-    ships = AISVesselFiltered.objects.filter(
-        lat__isnull=False,
-        lon__isnull=False,
-        shipname__isnull=False,
-        callsign__isnull=False,
-        imo__isnull=False
-    ).exclude(
-        shipname='',
-        callsign=''
-    ).order_by('mmsi', 'received_at')
-
-    serialized = [{
-        "mmsi": ship.mmsi,
-        "lat": ship.lat,
-        "lon": ship.lon,
-        "shiptype": ship.shiptype,
-        "speed": ship.speed,
-        "received_at": localtime(make_aware(ship.received_at) if is_naive(ship.received_at) else ship.received_at).strftime("%Y-%m-%d %H:%M:%S"),
-        "imo": ship.imo,
-        "callsign": ship.callsign,
-        "shipname": ship.shipname,
-        "status": ship.status
-    } for ship in ships]
-
-    return render(request, "index.html", {
-        "ships_json": json.dumps(serialized)
-    })
-
 
 def ppi_dashboard(request):
     mmsi = request.GET.get("mmsi")
@@ -328,19 +345,42 @@ def homepage(request):
 def index_map(request):
     return render(request, 'index.html')
 
-# Populate Trio Trigger (manual POST refresh)
+# Populate Pre-Processing and Processing (Manual Refresh Button)
+from django.views.decorators.csrf import csrf_exempt
+from django.http import JsonResponse
 from myapp.phase_tracker import compute_phase_durations
 from myapp.daily_tables import populate_daily_phase_tables
 from myapp.ppi_evaluation import populate_ppi_evaluation
+from myapp.views import filter_ais_data_view  # Ensure this import points to the correct location
 
 @csrf_exempt
 def refresh_ppi(request):
     if request.method == 'POST':
         try:
+            from myapp.models import AISData, AISVesselFiltered
+
+            # Step 1: Smart skip — only preprocess if new data exists
+            latest_filtered = AISVesselFiltered.objects.order_by('-received_at').first()
+            latest_raw = AISData.objects.order_by('-received_at').first()
+
+            if not latest_filtered or (latest_raw and latest_raw.received_at > latest_filtered.received_at):
+                print("New data found. Running Preprocessing...")
+                filter_ais_data_view(request)
+            else:
+                print("No new AIS data. Skipping preprocessing...")
+
+            # Step 2: Run phase logic regardless
+            print("Calculating Phase Durations...")
             compute_phase_durations()
+
+            print("Populating Daily Phase Tables...")
             populate_daily_phase_tables()
+
+            print("Running PPI Evaluation...")
             populate_ppi_evaluation()
-            return JsonResponse({'status': 'success', 'message': 'PPI recalculated!'})
+
+            return JsonResponse({'status': 'success'})
         except Exception as e:
             return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
+
     return JsonResponse({'status': 'error', 'message': 'Invalid request method'}, status=400)

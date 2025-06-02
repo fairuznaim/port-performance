@@ -25,12 +25,13 @@ class AISData(models.Model):
     to_starboard = models.IntegerField(null=True, blank=True)
 
     destination = models.TextField(null=True, blank=True)
+    draught = models.FloatField(null=True, blank=True)
     status = models.IntegerField(null=True, blank=True)
 
     class Meta:
-        db_table = 'ais_vessel_combo'  # use your actual table name
-        managed = False                # 🔐 Don't let Django alter this table
-        default_permissions = ()      # Optional: prevent auto permissions
+        db_table = 'ais_vessel_combo'  
+        managed = False                
+        default_permissions = ()      
         auto_created = False
 
     def __str__(self):
