@@ -3,7 +3,7 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = 'your-secret-key'  # Keep yours
+SECRET_KEY = 'your-secret-key'
 
 DEBUG = True
 
@@ -17,8 +17,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'myapp',  # ✅ your app
-    'django_extensions',  # if you still use it
+    'myapp',  
+    'django_extensions',  
 ]
 
 MIDDLEWARE = [
@@ -36,7 +36,7 @@ ROOT_URLCONF = 'myproject.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [os.path.join(BASE_DIR, 'myapp', 'templates')],  # ✅ points to templates
+        'DIRS': [os.path.join(BASE_DIR, 'myapp', 'templates')],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -67,7 +67,7 @@ DATABASES = {
 STATIC_URL = '/static/'
 
 STATICFILES_DIRS = [
-    os.path.join(BASE_DIR, 'myapp', 'static'),  # ✅ your app's static folder
+    os.path.join(BASE_DIR, 'myapp', 'static'),
 ]
 
 # Not mandatory unless you `collectstatic`, ignore STATIC_ROOT for runserver

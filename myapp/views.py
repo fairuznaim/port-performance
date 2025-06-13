@@ -249,35 +249,69 @@ def map_with_data(request):
         "request": request
     })
 
+from django.http import JsonResponse
+from django.db import connection
+
+PORT_STANDARDS = {
+    "waiting": 1.0,
+    "approaching": 2.0,
+    "berthing": 18.78,
+    "turnaround": 21.90,
+}
+
+DAILY_PHASE_TABLES = {
+    "waiting": "daily_waiting_time",
+    "approaching": "daily_approaching_time",
+    "berthing": "daily_berthing_time",
+    "turnaround": "daily_turn_round_time",
+}
+
 def get_phase_graph_data(request, phase):
+    phase = phase.lower()
     if phase not in DAILY_PHASE_TABLES:
         return JsonResponse({'error': 'Invalid phase'}, status=400)
 
     table = DAILY_PHASE_TABLES[phase]
-    dates_param = request.GET.get('dates')
+    dates_param = request.GET.get("dates")
+    completeness_filter = request.GET.get("completeness")  # New: 'completed' or 'partial'
+
+    query = f"""
+        SELECT d.day, AVG(d.total_hours) AS avg_hours
+        FROM {table} d
+        JOIN ppi_evaluation_table p
+          ON d.mmsi = p.mmsi AND d.day = p.day AND d.trt_cycle_number = p.trt_cycle_number
+        WHERE 1=1
+    """
+    params = []
+
+    # Optional date filter
+    if dates_param:
+        selected_dates = dates_param.split(",")
+        placeholders = ",".join(["%s"] * len(selected_dates))
+        query += f" AND d.day IN ({placeholders})"
+        params.extend(selected_dates)
+
+    # Optional completeness filter
+    if completeness_filter == "completed":
+        query += " AND p.is_completed = TRUE"
+    elif completeness_filter == "partial":
+        query += " AND p.is_partial = TRUE"
+
+    query += " GROUP BY d.day ORDER BY d.day"
 
     with connection.cursor() as cursor:
-        if dates_param:
-            selected_dates = dates_param.split(',')
-            placeholders = ",".join(["%s"] * len(selected_dates))
-            cursor.execute(f"""
-                SELECT day, AVG(total_hours) AS avg_hours
-                FROM {table}
-                WHERE day IN ({placeholders})
-                GROUP BY day
-                ORDER BY day;
-            """, selected_dates)
-        else:
-            cursor.execute(f"""
-                SELECT day, AVG(total_hours) AS avg_hours
-                FROM {table}
-                GROUP BY day
-                ORDER BY day;
-            """)
-
+        cursor.execute(query, params)
         daily = cursor.fetchall()
-        daily_data = [{'date': row[0].strftime('%Y-%m-%d'), 'average': round(row[1], 2)} for row in daily]
-        avg_of_avgs = round(sum(d['average'] for d in daily_data) / len(daily_data), 2) if daily_data else 0.0
+
+    daily_data = [
+        {'date': row[0].strftime('%Y-%m-%d'), 'average': round(row[1], 2)}
+        for row in daily
+    ]
+
+    avg_of_avgs = round(
+        sum(d['average'] for d in daily_data) / len(daily_data),
+        2
+    ) if daily_data else 0.0
 
     return JsonResponse({
         'phase': phase,
@@ -288,17 +322,17 @@ def get_phase_graph_data(request, phase):
 
 def ppi_dashboard(request):
     mmsi = request.GET.get("mmsi")
-    status_filter = request.GET.get("status")
+    completeness_filter = request.GET.get("completeness")
     date_string = request.GET.get("dates")
     selected_dates = []
 
     query = """
         SELECT mmsi, day, trt_cycle_number,
-               waiting_hours, approaching_hours, berthing_hours, trt_hours,
-               waiting_status, approaching_status, berthing_status, trt_status,
-               recommendation
+            waiting_hours, approaching_hours, berthing_hours, trt_hours,
+            waiting_status, approaching_status, berthing_status, trt_status,
+            recommendation, is_partial, is_completed
         FROM ppi_evaluation_table
-        WHERE 1=1
+        WHERE (is_partial = TRUE OR is_completed = TRUE)
     """
     params = []
 
@@ -312,9 +346,10 @@ def ppi_dashboard(request):
         query += f" AND day IN ({placeholders})"
         params.extend(selected_dates)
 
-    if status_filter:
-        query += " AND trt_status = %s"
-        params.append(status_filter)
+    if completeness_filter == "completed":
+        query += " AND is_completed = TRUE"
+    elif completeness_filter == "partial":
+        query += " AND is_partial = TRUE"
 
     query += " ORDER BY day DESC, trt_cycle_number LIMIT 500"
 

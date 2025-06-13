@@ -1,6 +1,9 @@
 from django.db import connection
-from collections import defaultdict, Counter
+from collections import defaultdict
 from datetime import datetime
+
+import logging
+logger = logging.getLogger(__name__)
 
 PORT_STANDARD_HOURS = {
     "Waiting": 1.0,
@@ -9,17 +12,14 @@ PORT_STANDARD_HOURS = {
     "TRT": 21.90
 }
 
-import logging
-logger = logging.getLogger(__name__)
 
 def populate_ppi_evaluation():
-    logger.info("📊 populate_ppi_evaluation() triggered")
+    logger.info("populate_ppi_evaluation() triggered")
     start_time = datetime.now()
-    logger.info(f"📊 Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"📊 Starting PPI Evaluation at {start_time}\n")
+    print(f"\nStarting PPI Evaluation at {start_time}\n")
 
     with connection.cursor() as cursor:
-        # 💥 Drop and recreate PPI table
+        # Recreate the evaluation table cleanly
         cursor.execute("DROP TABLE IF EXISTS ppi_evaluation_table CASCADE")
         cursor.execute("""
             CREATE TABLE ppi_evaluation_table (
@@ -40,25 +40,29 @@ def populate_ppi_evaluation():
                 created_at TIMESTAMP DEFAULT NOW()
             );
         """)
-        print("✅ Table recreated.\n")
+        print("✓ ppi_evaluation_table recreated.\n")
 
-        # 1️⃣ Fetch completeness info
+        # Map ship completeness by TRT cycle
         cursor.execute("""
-            SELECT mmsi, trt_cycle_number, array_agg(DISTINCT phase)
+            SELECT mmsi, trt_cycle_number,
+                bool_or(phase = 'Waiting' AND duration_hours > 0) as has_waiting,
+                bool_or(phase = 'Approaching' AND duration_hours > 0) as has_approaching,
+                bool_or(phase = 'Berthing' AND duration_hours > 0) as has_berthing,
+                bool_or(phase = 'Departure') as has_departure
             FROM ship_phase_duration
             GROUP BY mmsi, trt_cycle_number
         """)
+
         phase_map = {}  # (mmsi, cycle) → completeness_level
-        for mmsi, cycle, phases in cursor.fetchall():
-            phase_set = set(phases)
-            if {"Waiting", "Approaching", "Berthing", "Departure"}.issubset(phase_set):
+        for mmsi, cycle, has_waiting, has_approaching, has_berthing, has_departure in cursor.fetchall():
+            if has_waiting and has_approaching and has_berthing and has_departure:
                 phase_map[(mmsi, cycle)] = "COMPLETED"
-            elif {"Waiting", "Approaching", "Berthing"}.issubset(phase_set):
+            elif has_waiting and has_approaching and has_berthing:
                 phase_map[(mmsi, cycle)] = "PHASED"
             else:
                 phase_map[(mmsi, cycle)] = "RAW_ONLY"
 
-        # 2️⃣ Phase Aggregation Tables
+        # Load durations from daily tables
         phase_tables = {
             "Waiting": "daily_waiting_time",
             "Approaching": "daily_approaching_time",
@@ -66,35 +70,37 @@ def populate_ppi_evaluation():
             "TRT": "daily_turn_round_time"
         }
 
-        # 3️⃣ Load daily durations from all phase tables
         ship_day_data = defaultdict(lambda: {
             "mmsi": None,
             "day": None,
             "trt_cycle_number": None
         })
 
-        for phase_name, table_name in phase_tables.items():
+        for phase, table in phase_tables.items():
             cursor.execute(f"""
                 SELECT mmsi, day, total_hours, trt_cycle_number
-                FROM {table_name}
+                FROM {table};
             """)
-            for mmsi, day, total_hours, cycle in cursor.fetchall():
+            for mmsi, day, total, cycle in cursor.fetchall():
                 key = (mmsi, day, cycle)
                 ship_day_data[key]["mmsi"] = mmsi
                 ship_day_data[key]["day"] = day
                 ship_day_data[key]["trt_cycle_number"] = cycle
-                ship_day_data[key][f"{phase_name.lower()}_hours"] = total_hours
+                ship_day_data[key][f"{phase.lower()}_hours"] = total
 
-        # 4️⃣ Calculate averages from port
+        # Calculate port-wide averages
         avg_durations = {}
-        for phase_name, table_name in phase_tables.items():
-            cursor.execute(f"SELECT AVG(total_hours) FROM {table_name}")
+        for phase, table in phase_tables.items():
+            cursor.execute(f"SELECT AVG(total_hours) FROM {table}")
             avg = cursor.fetchone()[0] or 0
-            avg_durations[phase_name] = avg
+            avg_durations[phase] = round(avg, 2)
 
-        print(f"🧠 Loaded port-wide averages: {avg_durations}\n")
+        print(f"✓ Loaded Port Averages: {avg_durations}\n")
 
+        # Phase evaluation function
         def evaluate_phase(value, avg, std):
+            if value is None or value == 0:
+                return "No Data"
             if value > std and value > avg:
                 return "Too Long"
             elif value < std and value < avg:
@@ -102,63 +108,59 @@ def populate_ppi_evaluation():
             else:
                 return "Right on Time"
 
-        # 5️⃣ Build final records
         records = []
         skipped = 0
 
         for (mmsi, day, cycle), data in ship_day_data.items():
             completeness = phase_map.get((mmsi, cycle), "RAW_ONLY")
-
-            # ❌ Skip RAW_ONLY ships
-            if completeness == "RAW_ONLY":
-                skipped += 1
-                continue
-
             w = data.get("waiting_hours", 0)
             a = data.get("approaching_hours", 0)
             b = data.get("berthing_hours", 0)
             t = data.get("trt_hours", w + a + b)
 
+            # Skip invalid or incomplete cycles
+            if completeness == "RAW_ONLY" or a == 0 or b == 0:
+                print(f"Skipping: {mmsi} | {day} | Phase Durations: W:{w}, A:{a}, B:{b} | {completeness}")
+                skipped += 1
+                continue
+
+            # Evaluate
             w_status = evaluate_phase(w, avg_durations["Waiting"], PORT_STANDARD_HOURS["Waiting"])
             a_status = evaluate_phase(a, avg_durations["Approaching"], PORT_STANDARD_HOURS["Approaching"])
             b_status = evaluate_phase(b, avg_durations["Berthing"], PORT_STANDARD_HOURS["Berthing"])
             t_status = evaluate_phase(t, avg_durations["TRT"], PORT_STANDARD_HOURS["TRT"])
 
-            too_long_phases = []
-            if w_status == "Too Long": too_long_phases.append("Waiting")
-            if a_status == "Too Long": too_long_phases.append("Approaching")
-            if b_status == "Too Long": too_long_phases.append("Berthing")
+            too_long = [p for p, s in zip(["Waiting", "Approaching", "Berthing"], [w_status, a_status, b_status]) if s == "Too Long"]
 
-            if too_long_phases:
-                rec = f"Consider optimizing {' and '.join(too_long_phases)} procedures."
-            elif all(status == "Right on Time" for status in [w_status, a_status, b_status]):
-                rec = "Operation meets standard across all phases."
+            if too_long:
+                recommendation = f"Consider optimizing {' and '.join(too_long)}."
+            elif all(s == "Right on Time" for s in [w_status, a_status, b_status]):
+                recommendation = "Operation meets port standards across all phases."
             else:
-                rec = "Operation ahead of standards."
+                recommendation = "Performance exceeds port standards."
 
-            is_partial = (completeness == "PHASED")
-            is_completed = (completeness == "COMPLETED")
+            is_partial = completeness == "PHASED"
+            is_completed = completeness == "COMPLETED"
 
             records.append((
                 mmsi, day, cycle, w, a, b, t,
                 w_status, a_status, b_status, t_status,
                 is_partial, is_completed,
-                rec
+                recommendation
             ))
 
-        print(f"✅ Prepared {len(records)} evaluation records ({skipped} raw-only cycles skipped).\n")
+        print(f"Prepared {len(records)} PPI records | Skipped {skipped} incomplete cycles.\n")
 
-        cursor.executemany("""
-            INSERT INTO ppi_evaluation_table (
-                mmsi, day, trt_cycle_number,
-                waiting_hours, approaching_hours, berthing_hours, trt_hours,
-                waiting_status, approaching_status, berthing_status, trt_status,
-                is_partial, is_completed,
-                recommendation
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, records)
+        # Insert into ppi_evaluation_table
+        if records:
+            cursor.executemany("""
+                INSERT INTO ppi_evaluation_table (
+                    mmsi, day, trt_cycle_number,
+                    waiting_hours, approaching_hours, berthing_hours, trt_hours,
+                    waiting_status, approaching_status, berthing_status, trt_status,
+                    is_partial, is_completed, recommendation
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+            """, records)
 
-    end_time = datetime.now()
-    logger.info(f"✅ Finished populate_ppi_evaluation() in {(end_time - start_time).total_seconds():.2f} seconds.")
-    print(f"✅ Inserted {len(records)} PPI evaluations at {end_time.strftime('%Y-%m-%d %H:%M:%S')}.\n")
+    logger.info(f"populate_ppi_evaluation() finished with {len(records)} rows inserted.")
+    print("Evaluation completed and written to `ppi_evaluation_table`.\n")

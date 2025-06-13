@@ -1,16 +1,15 @@
 document.addEventListener("DOMContentLoaded", function () {
-    // 💡 Define this globally to make sure map is accessible
     if (typeof map === "undefined") {
       console.error("Map is not defined. Make sure Leaflet map is initialized before loading this script.");
       return;
     }
   
-    // 🟩 Port Boundary
+    // Port Boundary
     const portBoundary = [
-      [-5.7360109, 106.8017998], // 1️⃣ NW
-      [-5.7360109, 107.0098827], // 2️⃣ NE
-      [-6.1620722, 107.0091395], // 3️⃣ SE
-      [-6.1607633, 106.8017998]  // 4️⃣ SW
+      [-5.7360109, 106.8017998], // NW
+      [-5.7360109, 107.0098827], // NE
+      [-6.1620722, 107.0091395], // SE
+      [-6.1607633, 106.8017998]  // SW
     ];
   
     L.polygon(portBoundary, {

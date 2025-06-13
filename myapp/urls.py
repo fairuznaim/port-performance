@@ -13,5 +13,4 @@ urlpatterns = [
     path('ppi-dashboard/', ppi_dashboard, name='ppi_dashboard'),
     path('api/phase-graph/<str:phase>/', get_phase_graph_data, name='phase-graph-api'),
     path('refresh-ppi/',refresh_ppi, name='refresh_ppi'),
-
 ]
