@@ -2,7 +2,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>PPI Dashboard</title>
+    <title>Vessel Service Performance Dashboard</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css" rel="stylesheet">
     <style>
@@ -14,7 +14,7 @@
 </head>
 <body class="p-4">
 
-<h2 class="mb-5 text-center">Port Performance Indicators (PPI) Dashboard</h2>
+<h2 class="mb-5 text-center">Vessel Service Performance Dashboard</h2>
 
 <!-- Filter Section -->
 <div class="container mb-5">
@@ -66,11 +66,11 @@
             <td>{{ row.berthing_hours }} hrs ({{ row.berthing_status }})</td>
             <td><strong>{{ row.trt_hours }}</strong> hrs ({{ row.trt_status }})</td>
             <td>
-                {% if row.trt_status == "Too Long" %}
+                {% if row.trt_status == "Slower than Standard" %}
                     <span class="badge bg-danger">{{ row.trt_status }}</span>
-                {% elif row.trt_status == "Above Standard" %}
+                {% elif row.trt_status == "Faster than Standard" %}
                     <span class="badge bg-success">{{ row.trt_status }}</span>
-                {% else %}
+                {% elif row.trt_status == "Right on Time" %}
                     <span class="badge bg-warning text-dark">{{ row.trt_status }}</span>
                 {% endif %}
             </td>
@@ -93,7 +93,7 @@
 <div class="container mb-4">
     <div class="row justify-content-center">
         <div class="col-md-4 text-center">
-            <button id="refresh-ppi-btn" class="btn btn-primary w-100">Refresh PPI Calculation</button>
+            <button id="refresh-ppi-btn" class="btn btn-primary w-100">Refresh Vessel Service Peformance Calculation</button>
             <div id="refresh-ppi-status" class="mt-2"></div>
         </div>
     </div>
@@ -363,7 +363,7 @@ document.getElementById('refresh-ppi-btn').addEventListener('click', function ()
         "Pre-processing Data...",
         "Calculate Ship Phases...",
         "Populate Daily Phase Tables...",
-        "Processing PPI Evaluation..."
+        "Processing Vessel Service Performance Evaluation..."
     ];
 
     async function refreshPPI() {

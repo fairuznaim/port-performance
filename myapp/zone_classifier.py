@@ -31,53 +31,53 @@ BERTHING_ZONES = [
     Polygon([(106.969110, -6.071408), (106.970230, -6.071169), (106.974141, -6.084647), (106.972722, -6.084910)])
 ]
 
+from shapely.geometry import Point
+
+SPEED_THRESHOLDS = {
+    "stop": 0.4,
+    "maneuvering": 6,
+    "approaching": 12,
+    "arrival": 15
+}
+
 def classify_ship_status(lat, lon, speed, prev_phase=None):
     point = Point(lon, lat)
-    print(f"\nClassifying ship at ({lat}, {lon}) with speed {speed} knots — Prev Phase: {prev_phase}")
+    print(f"[CLASSIFY] Ship at (lat: {lat}, lon: {lon}), speed: {speed}, prev_phase: {prev_phase}")
 
-    # Berthing Zones
+    # 1 Berthing Zones
     for i, poly in enumerate(BERTHING_ZONES):
         if poly.covers(point):
-            if speed <= 0.9:
-                print(f"Inside Berthing Zone {i+1}: Status = Berthing")
+            if speed <= SPEED_THRESHOLDS["stop"]:
+                print(f"→ Status: Berthing (Zone {i+1})")
                 return "Berthing"
-            elif speed <= 6:
-                print(f"Inside Berthing Zone {i+1}: Status = Maneuvering")
-                return "Maneuvering"
             else:
-                print(f"Inside Berthing Zone {i+1} but moving fast → assuming Maneuvering")
+                print(f"→ Status: Maneuvering (Zone {i+1})")
                 return "Maneuvering"
 
-    # Waiting Zone
+    # 2 Waiting Zone
     if ZONE_2_POLY.covers(point):
-        if prev_phase == "Berthing":
-            print("Left Berthing into Zone 2 → Marking as Departure")
-            return "Departure"
-        elif speed <= 0.9:
-            print("Zone 2 + low speed → Anchoring")
+        if speed <= SPEED_THRESHOLDS["stop"]:
+            print("→ Status: Anchoring (in Waiting Zone)")
             return "Anchoring"
-        elif speed <= 12:
-            print("Zone 2 + moving → Approaching")
-            return "Approaching"
-        else:
-            print("Zone 2 but moving fast → Approaching")
-            return "Approaching"
-
-    # Outer Zone
-    if ZONE_1_POLY.covers(point):
-        if prev_phase == "Berthing":
-            print("Left Berthing into Zone 1 → Marking as Departure")
+        elif prev_phase in ["Berthing", "Maneuvering"]:
+            print("→ Status: Departure (from Berthing into Waiting Zone)")
             return "Departure"
-        elif speed <= 0.9:
-            print("Zone 1 + low speed → Postponed")
-            return "Postponed"
-        elif speed <= 15:
-            print("Zone 1 + normal speed → Arrival")
-            return "Arrival"
         else:
-            print("Zone 1 but high speed → Arrival")
+            print("→ Status: Approaching (in Waiting Zone)")
+            return "Approaching"
+
+    # 3 Outer Zone
+    if ZONE_1_POLY.covers(point):
+        if speed <= SPEED_THRESHOLDS["stop"]:
+            print("→ Status: Postponed (in Outer Zone)")
+            return "Postponed"
+        elif prev_phase in ["Berthing", "Maneuvering"]:
+            print("→ Status: Departure (from Berthing into Outer Zone)")
+            return "Departure"
+        else:
+            print("→ Status: Arrival (in Outer Zone)")
             return "Arrival"
 
-    # Outside known zones
-    print("Outside all defined zones → Outside Port Area")
+    # 4 Outside Port Area
+    print("→ Status: Outside Port Area")
     return "Outside Port Area"

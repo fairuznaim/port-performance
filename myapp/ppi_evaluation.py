@@ -12,7 +12,6 @@ PORT_STANDARD_HOURS = {
     "TRT": 21.90
 }
 
-
 def populate_ppi_evaluation():
     logger.info("populate_ppi_evaluation() triggered")
     start_time = datetime.now()
@@ -101,10 +100,10 @@ def populate_ppi_evaluation():
         def evaluate_phase(value, avg, std):
             if value is None or value == 0:
                 return "No Data"
-            if value > std and value > avg:
-                return "Too Long"
-            elif value < std and value < avg:
-                return "Above Standard"
+            if value > std:
+                return "Slower than Standard"
+            elif value < std:
+                return "Faster than Standard"
             else:
                 return "Right on Time"
 
@@ -130,12 +129,27 @@ def populate_ppi_evaluation():
             b_status = evaluate_phase(b, avg_durations["Berthing"], PORT_STANDARD_HOURS["Berthing"])
             t_status = evaluate_phase(t, avg_durations["TRT"], PORT_STANDARD_HOURS["TRT"])
 
-            too_long = [p for p, s in zip(["Waiting", "Approaching", "Berthing"], [w_status, a_status, b_status]) if s == "Too Long"]
+            phase_statuses = {
+                "Waiting": w_status,
+                "Approaching": a_status,
+                "Berthing": b_status
+            }
 
-            if too_long:
-                recommendation = f"Consider optimizing {' and '.join(too_long)}."
-            elif all(s == "Right on Time" for s in [w_status, a_status, b_status]):
+            slower_phases = [phase for phase, status in phase_statuses.items() if status == "Slower than Standard"]
+            exact_match = all(status == "Right on Time" for status in phase_statuses.values())
+            has_faster = any(status == "Faster than Standard" for status in phase_statuses.values())
+
+            if slower_phases:
+                if len(slower_phases) == 1:
+                    recommendation = f"Consider optimizing {slower_phases[0]} procedures."
+                elif len(slower_phases) == 2:
+                    recommendation = f"Consider optimizing {slower_phases[0]} and {slower_phases[1]} procedures."
+                else:
+                    recommendation = "Consider optimizing Waiting, Approaching, and Berthing procedures."
+            elif exact_match:
                 recommendation = "Operation meets port standards across all phases."
+            elif has_faster:
+                recommendation = "Performance exceeds port standards."
             else:
                 recommendation = "Performance exceeds port standards."
 
